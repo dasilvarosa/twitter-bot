@@ -175,4 +175,6 @@ if __name__ == "__main__":
     # Send Telegram summary (always sends; customize if you only want on >0)
     msg = f"Followed {follows_done} new users"
     print(f"[SUMMARY] {msg}")
-    send_telegram_message(msg)
+    if follows_done > 0:
+        send_telegram_message(f"Followed {follows_done} new users")
+
