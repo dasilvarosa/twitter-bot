@@ -36,10 +36,10 @@ if missing:
 # ---------- Init Twitter clients ----------
 # OAuth1 for user-context write (follow)
 auth = tweepy.OAuth1UserHandler(API_KEY, API_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET)
-api = tweepy.API(auth, wait_on_rate_limit=True)
+api_v1 = tweepy.API(auth, wait_on_rate_limit=True)
 
 # Tweepy v2 client (reads + writes with user context)
-client = tweepy.Client(
+client_v2 = tweepy.Client(
     consumer_key=API_KEY,
     consumer_secret=API_SECRET,
     access_token=ACCESS_TOKEN,
@@ -76,15 +76,14 @@ def send_telegram_message(text: str):
         return False
 
 def get_my_user_id():
-    me = client.get_me()
+    me = client_v2.get_me()
     if not me or not me.data:
         raise RuntimeError("Could not resolve own user ID; check Twitter keys/permissions.")
     return str(me.data.id)
 
 def get_latest_tweet_ids(user_id: str, limit: int):
     ids = []
-    # exclude replies & retweets to focus on your original posts
-    resp = client.get_users_tweets(
+    resp = client_v2.get_users_tweets(
         id=user_id,
         max_results=min(100, max(5, limit)),
         exclude=["replies", "retweets"],
@@ -100,7 +99,7 @@ def get_likers_for_tweet(tweet_id: str, max_pages: int):
     pagination_token = None
     pages = 0
     while pages < max_pages:
-        resp = client.get_liking_users(
+        resp = client_v2.get_liking_users(
             id=tweet_id,
             pagination_token=pagination_token,
             max_results=100,
@@ -115,9 +114,18 @@ def get_likers_for_tweet(tweet_id: str, max_pages: int):
             break
     return users
 
+def already_following(target_user_id: str):
+    try:
+        friendship = api_v1.get_friendship(source_id=my_id, target_id=target_user_id)
+        if friendship and len(friendship) == 2:
+            return friendship[0].following
+    except Exception as e:
+        print(f"[FOLLOW CHECK ERROR] {target_user_id}: {e}")
+    return False
+
 def follow_user(target_user_id: str):
     try:
-        client.follow(target_user_id=target_user_id)  # no-op if already following
+        client_v2.follow(target_user_id=target_user_id)  # no-op if already following
         return True
     except tweepy.TweepyException as e:
         print(f"[FOLLOW ERROR] {target_user_id}: {e}")
@@ -150,12 +158,15 @@ if __name__ == "__main__":
                 break
 
             uid = str(u.id)
-            # skip repeats & self
             if uid in processed or uid == my_id:
                 continue
 
-            # optionally skip protected accounts (comment out to allow)
             if getattr(u, "protected", False):
+                processed.add(uid)
+                continue
+
+            if already_following(uid):
+                print(f"[SKIP] Already following @{getattr(u, 'username', uid)}")
                 processed.add(uid)
                 continue
 
@@ -169,12 +180,8 @@ if __name__ == "__main__":
             processed.add(uid)
             save_state()
 
-            # throttle between follow actions
             time.sleep(random.uniform(SLEEP_MIN, SLEEP_MAX))
 
-    # Send Telegram summary (always sends; customize if you only want on >0)
     msg = f"Followed {follows_done} new users"
     print(f"[SUMMARY] {msg}")
-    if follows_done > 0:
-        send_telegram_message(f"Followed {follows_done} new users")
-
+    send_telegram_message(msg)
